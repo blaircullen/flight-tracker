@@ -4,6 +4,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { format, parseISO } from 'date-fns';
 import './index.css';
 
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 function App() {
     const [activeAirline, setActiveAirline] = useState('both');
     const [flightData, setFlightData] = useState([]);
@@ -21,8 +23,8 @@ function App() {
         try {
             setLoading(true);
             const [flightsRes, insightsRes] = await Promise.all([
-                fetch('http://localhost:3001/api/flights/history'),
-                fetch('http://localhost:3001/api/insights')
+                fetch(`${API_URL}/api/flights/history`),
+                fetch(`${API_URL}/api/insights`)
             ]);
 
             const rawFlights = await flightsRes.json();
@@ -65,7 +67,7 @@ function App() {
     const handleLiveSearch = async () => {
         setIsSearching(true);
         try {
-            const response = await fetch('http://localhost:3001/api/flights/search', {
+            const response = await fetch(`${API_URL}/api/flights/search`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ origin, destination, date: dateRange, flexDays })
@@ -107,8 +109,7 @@ function App() {
         <div className="app-container">
             <nav className="navbar">
                 <div className="nav-brand">
-                    <Plane className="brand-icon" />
-                    <span className="brand-text">AirBlair</span>
+                    <img src="/logo.png" alt="AirBlair Logo" className="brand-logo" />
                 </div>
                 <div className="nav-links">
                     <button className="nav-btn active">Dashboard</button>

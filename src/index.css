@@ -5,30 +5,30 @@
   --surface-primary: rgba(26, 28, 41, 0.6);
   --surface-secondary: rgba(43, 46, 65, 0.4);
 
-  --bg-color: #f8fafc;
-  /* Very light blue-white */
-  --surface-primary: rgba(255, 255, 255, 0.85);
-  /* Translucent white */
-  --surface-secondary: rgba(255, 255, 255, 0.6);
-  --text-primary: #0f172a;
-  /* Very dark blue for strong contrast */
-  --text-secondary: #475569;
-  /* Medium blue-gray */
+  --bg-color: #f7f9fc;
+  /* Very light subtle gray-blue */
+  --surface-primary: rgba(255, 255, 255, 0.95);
+  /* Nearly solid white for clarity */
+  --surface-secondary: rgba(255, 255, 255, 0.7);
+  --text-primary: #0a1f3c;
+  /* Deep Navy from Logo */
+  --text-secondary: #5a6b80;
+  /* Muted navy-gray */
 
-  --brand-blue: #1d4ed8;
-  /* Strong patriotic blue */
-  --brand-blue-hover: #1e3a8a;
-  --brand-red: #e11d48;
-  /* Strong patriotic red */
+  --brand-blue: #0a1f3c;
+  /* Deep Navy from Logo */
+  --brand-blue-hover: #133360;
+  --brand-red: #c51f28;
+  /* Flag Red from Logo */
 
-  --border-subtle: rgba(15, 23, 42, 0.1);
-  /* Dark border for light theme */
-  --border-focus: rgba(29, 78, 216, 0.5);
-  /* Blue focus ring */
+  --border-subtle: rgba(10, 31, 60, 0.1);
+  /* Navy border */
+  --border-focus: rgba(10, 31, 60, 0.5);
+  /* Navy focus ring */
 
-  --gradient-main: linear-gradient(135deg, rgba(29, 78, 216, 0.05) 0%, rgba(225, 29, 72, 0.05) 100%);
+  --gradient-main: linear-gradient(135deg, rgba(10, 31, 60, 0.03) 0%, rgba(197, 31, 40, 0.03) 100%);
   --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-  --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.02);
+  --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(10, 31, 60, 0.03);
 }
 
 * {
@@ -108,17 +108,17 @@ p {
   gap: 0.75rem;
 }
 
-.brand-icon {
-  color: var(--brand-blue);
+.brand-logo {
+  height: 48px;
+  /* A bit larger to accommodate the eagle/plane shape */
+  width: auto;
+  object-fit: contain;
+  margin-right: 0.5rem;
 }
 
 .brand-text {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  background: linear-gradient(to right, var(--brand-blue), var(--brand-red));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  display: none;
+  /* Hide the text since it's already in the logo image itself */
 }
 
 .nav-links {
