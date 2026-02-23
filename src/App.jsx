@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plane, Calendar, MapPin, Search, TrendingDown, Clock, CalendarPlus, LayoutDashboard, Star, History } from 'lucide-react';
+import { Plane, Calendar, MapPin, Search, TrendingDown, Clock, CalendarPlus, LayoutDashboard } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, parseISO } from 'date-fns';
 import './index.css';
@@ -13,31 +13,45 @@ function App() {
     const [loading, setLoading] = useState(true);
     const [isSearching, setIsSearching] = useState(false);
 
-    const [origin, setOrigin] = useState('JFK');
-    const [destination, setDestination] = useState('MIA');
-    const [dateRange, setDateRange] = useState('2024-04-12');
-    const [flexDays, setFlexDays] = useState(0);
+    const [origin, setOrigin] = useState('HPN');
+    const [destination, setDestination] = useState('PBI');
+    const [dateRange, setDateRange] = useState('2026-03-01');
+    const [returnDate, setReturnDate] = useState('2026-03-08');
+    const [flexDays, setFlexDays] = useState(3);
 
     const fetchData = async () => {
         try {
             setLoading(true);
-            const [flightsRes, insightsRes] = await Promise.all([
-                fetch(`${API_URL}/api/flights/history`),
-                fetch(`${API_URL}/api/insights`)
+            const outParams = `?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}`;
+            const retParams = `?origin=${encodeURIComponent(destination)}&destination=${encodeURIComponent(origin)}`;
+            const [outFlightsRes, retFlightsRes, outInsightsRes, retInsightsRes] = await Promise.all([
+                fetch(`${API_URL}/api/flights/history${outParams}`),
+                fetch(`${API_URL}/api/flights/history${retParams}`),
+                fetch(`${API_URL}/api/insights${outParams}`),
+                fetch(`${API_URL}/api/insights${retParams}`)
             ]);
-            const rawFlights = await flightsRes.json();
-            const insightsData = await insightsRes.json();
+            const outFlights = await outFlightsRes.json();
+            const retFlights = await retFlightsRes.json();
+            const outInsights = await outInsightsRes.json();
+            const retInsights = await retInsightsRes.json();
 
+            // Tag insights with leg direction
+            outInsights.forEach(i => { i.leg = 'outbound'; });
+            retInsights.forEach(i => { i.leg = 'return'; i.id = i.id + 100; });
+
+            // Build chart from outbound departure dates (price by date)
             const chartDataMap = {};
-            rawFlights.forEach(flight => {
-                const date = format(parseISO(flight.scraped_at), 'MMM dd');
+            outFlights.forEach(flight => {
+                const date = flight.departure_date || format(parseISO(flight.scraped_at), 'MMM dd');
                 if (!chartDataMap[date]) chartDataMap[date] = { date };
-                if (flight.airline === 'JetBlue') chartDataMap[date].jetblue = flight.price;
-                else if (flight.airline === 'JSX') chartDataMap[date].jsx = flight.price;
+                const key = flight.airline === 'JetBlue' ? 'jetblue' : 'jsx';
+                if (!chartDataMap[date][key] || flight.price < chartDataMap[date][key]) {
+                    chartDataMap[date][key] = flight.price;
+                }
             });
 
-            setFlightData(Object.values(chartDataMap).sort((a, b) => new Date(a.date) - new Date(b.date)));
-            setInsights(insightsData);
+            setFlightData(Object.values(chartDataMap).sort((a, b) => a.date.localeCompare(b.date)));
+            setInsights([...outInsights, ...retInsights]);
         } catch (error) {
             console.error("Error fetching data:", error);
         } finally {
@@ -53,7 +67,7 @@ function App() {
             const response = await fetch(`${API_URL}/api/flights/search`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ origin, destination, date: dateRange, flexDays })
+                body: JSON.stringify({ origin, destination, date: dateRange, returnDate, flexDays })
             });
             if (!response.ok) {
                 const errorData = await response.json();
@@ -97,12 +111,6 @@ function App() {
 
                     <div className="nav-links">
                         <button className="nav-btn active"><LayoutDashboard size={15} /> Dashboard</button>
-                        <button className="nav-btn"><Star size={15} /> Watchlists</button>
-                        <button className="nav-btn"><History size={15} /> History</button>
-                    </div>
-
-                    <div className="nav-actions">
-                        <button className="btn-signin">Sign In</button>
                     </div>
                 </div>
             </nav>
@@ -156,19 +164,27 @@ function App() {
                     </div>
 
                     <div className="search-group">
-                        <label>Departure</label>
+                        <label>Depart</label>
                         <div className="input-with-icon">
                             <Calendar size={15} />
-                            <input type="text" value={dateRange} onChange={(e) => setDateRange(e.target.value)} placeholder="YYYY-MM-DD" />
+                            <input type="date" value={dateRange} onChange={(e) => setDateRange(e.target.value)} />
                         </div>
                     </div>
 
                     <div className="search-group">
-                        <label>Flexibility</label>
+                        <label>Return</label>
+                        <div className="input-with-icon">
+                            <Calendar size={15} />
+                            <input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+                        </div>
+                    </div>
+
+                    <div className="search-group">
+                        <label>Flex</label>
                         <div className="input-with-icon select-wrapper">
                             <CalendarPlus size={15} />
                             <select value={flexDays} onChange={(e) => setFlexDays(parseInt(e.target.value))} className="flex-select">
-                                <option value={0}>Exact Date</option>
+                                <option value={0}>Exact</option>
                                 <option value={1}>&plusmn; 1 Day</option>
                                 <option value={2}>&plusmn; 2 Days</option>
                                 <option value={3}>&plusmn; 3 Days</option>
@@ -229,6 +245,12 @@ function App() {
                     </div>
 
                     <div className="insights-sidebar">
+                        {!loading && !isSearching && insights.length === 0 && (
+                            <div className="insight-card" style={{ textAlign: 'center', padding: '2rem 1rem', color: '#8a96a8' }}>
+                                <Plane size={32} style={{ marginBottom: '0.5rem', opacity: 0.4 }} />
+                                <p style={{ fontSize: '0.85rem' }}>Search a route to see price insights</p>
+                            </div>
+                        )}
                         {!loading && !isSearching && insights.map((insight) => (
                             <div key={insight.id} className={`insight-card suggestion-${insight.type}`}>
                                 <div className={`insight-icon bg-${insight.type === 'buy' ? 'green' : (insight.type === 'wait' ? 'yellow' : 'blue')}`}>
@@ -241,12 +263,18 @@ function App() {
                                     )}
                                 </div>
                                 <div className="insight-content">
+                                    {insight.leg && <span style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: insight.leg === 'outbound' ? '#1c4480' : '#c51f28' }}>{insight.leg === 'outbound' ? `✈ ${origin}→${destination}` : `✈ ${destination}→${origin}`}</span>}
                                     <h4>{insight.title}</h4>
                                     <p>{insight.description}</p>
                                     <div className="current-price">
                                         <span className="price">${insight.price} {insight.type === 'flex' && <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>(-${insight.savings})</span>}</span>
                                         <span className={`airline-badge ${insight.airline.toLowerCase()}`}>{insight.airline}</span>
                                     </div>
+                                    {insight.searchUrl && (
+                                        <a href={insight.searchUrl} target="_blank" rel="noopener noreferrer" className="insight-link">
+                                            View on Google Flights →
+                                        </a>
+                                    )}
                                 </div>
                             </div>
                         ))}

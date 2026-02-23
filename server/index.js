@@ -32,9 +32,20 @@ const db = new sqlite3.Database(dbPath, (err) => {
         departure_date TEXT NOT NULL,
         price REAL NOT NULL,
         scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        is_direct BOOLEAN DEFAULT 1
+        is_direct BOOLEAN DEFAULT 1,
+        departure_time TEXT,
+        arrival_time TEXT,
+        duration_min INTEGER,
+        flight_number TEXT,
+        stops INTEGER DEFAULT 0,
+        booking_token TEXT
       )
     `);
+        // Add columns if table already exists (migration)
+        const cols = ['departure_time', 'arrival_time', 'duration_min', 'flight_number', 'stops', 'booking_token'];
+        cols.forEach(col => {
+            db.run(`ALTER TABLE flights ADD COLUMN ${col} ${col === 'duration_min' || col === 'stops' ? 'INTEGER' : 'TEXT'}`, () => {});
+        });
     }
 });
 
@@ -68,11 +79,17 @@ app.get('/api/seed', (req, res) => {
 
 // API Routes
 app.get('/api/flights/history', (req, res) => {
-    const { origin, destination, date } = req.query;
+    const { origin, destination } = req.query;
 
-    // For demo: return all data if no filters, else filter
-    let query = 'SELECT * FROM flights ORDER BY scraped_at ASC';
-    db.all(query, [], (err, rows) => {
+    let query, params;
+    if (origin && destination) {
+        query = 'SELECT * FROM flights WHERE UPPER(origin) = UPPER(?) AND UPPER(destination) = UPPER(?) ORDER BY scraped_at ASC';
+        params = [origin, destination];
+    } else {
+        query = 'SELECT * FROM flights ORDER BY scraped_at ASC';
+        params = [];
+    }
+    db.all(query, params, (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -82,67 +99,141 @@ app.get('/api/flights/history', (req, res) => {
 });
 
 app.get('/api/insights', (req, res) => {
-    // First, fetch the most recent data from DB to generate dynamic insights
-    db.all('SELECT * FROM flights ORDER BY scraped_at DESC LIMIT 50', [], (err, rows) => {
+    const { origin, destination } = req.query;
+    let query, params;
+    if (origin && destination) {
+        query = 'SELECT * FROM flights WHERE UPPER(origin) = UPPER(?) AND UPPER(destination) = UPPER(?) ORDER BY scraped_at DESC LIMIT 100';
+        params = [origin, destination];
+    } else {
+        query = 'SELECT * FROM flights ORDER BY scraped_at DESC LIMIT 100';
+        params = [];
+    }
+    db.all(query, params, (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
 
-        // Default mock insights to keep the UI rich
-        const dynamicInsights = [
-            {
-                id: 1,
-                type: 'buy',
-                airline: 'JetBlue',
-                price: 198,
-                title: 'Strong Buy Recommendation',
-                description: 'JetBlue fares for JFK → MIA dropped by $45 in the last 2 hours. This is 15% below the 30-day average.',
-            },
-            {
-                id: 2,
-                type: 'wait',
-                airline: 'JSX',
-                price: 550,
-                title: 'Hold / Wait',
-                description: 'JSX prices are currently peaking due to spring break demand. Historical data suggests a 10% drop on Tuesday evenings.',
-            }
-        ];
-
-        // Simple analysis for flexible dates
-        // Find if there's a cheaper flight on an alternative date than the primary logged date
-        const uniqueDates = [...new Set(rows.map(r => r.departure_date))];
-        if (uniqueDates.length > 1) {
-            // Very basic mock flexible analysis: compare the latest two dates
-            const mainDateStr = uniqueDates[0];
-            const altDateStr = uniqueDates[1];
-
-            const mainPrice = rows.find(r => r.departure_date === mainDateStr)?.price || 0;
-            const altPrice = rows.find(r => r.departure_date === altDateStr)?.price || 0;
-
-            if (altPrice > 0 && mainPrice > altPrice && (mainPrice - altPrice > 20)) {
-                dynamicInsights.unshift({
-                    id: 3,
-                    type: 'flex',
-                    airline: rows.find(r => r.departure_date === altDateStr)?.airline || 'JetBlue',
-                    price: altPrice,
-                    savings: mainPrice - altPrice,
-                    title: 'Alternative Date Suggestion',
-                    description: `You can save $${mainPrice - altPrice} by flying on ${altDateStr} instead of your target date!`,
-                });
-            }
+        if (rows.length === 0) {
+            return res.json([]);
         }
 
-        res.json(dynamicInsights);
+        const insights = [];
+        let idCounter = 1;
+
+        // Group by airline, find cheapest for each
+        const byAirline = {};
+        rows.forEach(r => {
+            if (!byAirline[r.airline]) byAirline[r.airline] = [];
+            byAirline[r.airline].push(r);
+        });
+
+        // Build a Google Flights search URL
+        const buildGFUrl = (origin, dest, date) => {
+            return `https://www.google.com/travel/flights?q=flights+from+${origin}+to+${dest}+on+${date}+one+way`;
+        };
+
+        const airlines = Object.keys(byAirline);
+        airlines.forEach(airline => {
+            const flights = byAirline[airline];
+            const prices = flights.map(f => f.price);
+            const minPrice = Math.min(...prices);
+            const avgPrice = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+            const cheapest = flights.find(f => f.price === minPrice);
+            const route = `${cheapest.origin} → ${cheapest.destination}`;
+
+            const flightDetail = cheapest.departure_time && cheapest.arrival_time
+                ? `${cheapest.departure_time}–${cheapest.arrival_time}${cheapest.stops > 0 ? ` (${cheapest.stops} stop)` : ' nonstop'}`
+                : '';
+            const searchUrl = buildGFUrl(cheapest.origin, cheapest.destination, cheapest.departure_date);
+
+            const base = {
+                id: idCounter++,
+                airline,
+                price: minPrice,
+                flightDetail,
+                date: cheapest.departure_date,
+                searchUrl,
+            };
+
+            if (minPrice < avgPrice * 0.9) {
+                insights.push({ ...base, type: 'buy', title: 'Strong Buy Recommendation',
+                    description: `${airline} ${route} at $${minPrice} — ${Math.round((1 - minPrice / avgPrice) * 100)}% below avg $${avgPrice}. ${flightDetail}`,
+                });
+            } else if (minPrice > avgPrice * 1.1) {
+                insights.push({ ...base, type: 'wait', title: 'Hold / Wait',
+                    description: `${airline} ${route} elevated at $${minPrice} (avg $${avgPrice}). Consider waiting.`,
+                });
+            } else {
+                insights.push({ ...base, type: 'buy', title: 'Best Price Found',
+                    description: `${airline} ${route} at $${minPrice}. ${flightDetail}`,
+                });
+            }
+        });
+
+        // Check for flexible date savings — per airline, cheapest flight across dates
+        airlines.forEach(airline => {
+            const flights = byAirline[airline];
+            const uniqueDates = [...new Set(flights.map(f => f.departure_date))].filter(Boolean);
+            if (uniqueDates.length <= 1) return;
+
+            // Find cheapest single flight per date for this airline
+            const cheapestByDate = {};
+            flights.forEach(f => {
+                if (!cheapestByDate[f.departure_date] || f.price < cheapestByDate[f.departure_date].price) {
+                    cheapestByDate[f.departure_date] = f;
+                }
+            });
+
+            const dates = Object.entries(cheapestByDate);
+            dates.sort((a, b) => a[1].price - b[1].price);
+            const cheapest = dates[0];
+            const mostExpensive = dates[dates.length - 1];
+
+            if (cheapest && mostExpensive && cheapest[0] !== mostExpensive[0]) {
+                const savings = mostExpensive[1].price - cheapest[1].price;
+                if (savings > 20) {
+                    insights.push({
+                        id: idCounter++,
+                        type: 'flex',
+                        airline,
+                        price: cheapest[1].price,
+                        savings,
+                        title: `Cheaper ${airline} Date`,
+                        description: `${airline} is $${cheapest[1].price} on ${cheapest[0]} vs $${mostExpensive[1].price} on ${mostExpensive[0]} — save $${savings}.`,
+                    });
+                }
+            }
+        });
+
+        res.json(insights);
     });
 });
 
 // Function to fetch real flight data
+// Round-robin key rotation across multiple SerpAPI keys
+const serpApiKeys = [
+    process.env.SERPAPI_KEY,
+    process.env.SERPAPI_KEY_2,
+].filter(Boolean);
+let serpKeyIndex = 0;
+
+const getNextSerpKey = () => {
+    if (serpApiKeys.length === 0) return null;
+    const key = serpApiKeys[serpKeyIndex % serpApiKeys.length];
+    serpKeyIndex++;
+    return key;
+};
+
 const fetchRealFlightPrices = async (origin = 'JFK', destination = 'MIA', baseDateStr = '2024-04-12', flexDays = 0) => {
-    const apiKey = process.env.SERPAPI_KEY;
+    const apiKey = getNextSerpKey();
     if (!apiKey) {
         console.log('No SERPAPI_KEY found. Skipping real data fetch. Please add key to .env file to enable 2x/day free checks.');
         return;
     }
+
+    // Normalize airport codes to uppercase
+    origin = origin.toUpperCase();
+    destination = destination.toUpperCase();
 
     // Calculate the array of dates to search based on flexDays
     let datesToSearch = [baseDateStr];
@@ -169,23 +260,32 @@ const fetchRealFlightPrices = async (origin = 'JFK', destination = 'MIA', baseDa
                     departure_id: origin,
                     arrival_id: destination,
                     outbound_date: dStr,
+                    type: 2,  // One-way flight
                     currency: 'USD',
                     api_key: apiKey
                 }
             });
 
-            const bestFlights = response.data.best_flights || [];
-            const stmt = db.prepare('INSERT INTO flights (airline, origin, destination, departure_date, price, scraped_at) VALUES (?, ?, ?, ?, ?, ?)');
+            const allFlights = [...(response.data.best_flights || []), ...(response.data.other_flights || [])];
+            const stmt = db.prepare('INSERT INTO flights (airline, origin, destination, departure_date, price, scraped_at, departure_time, arrival_time, duration_min, flight_number, stops, booking_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             const now = new Date().toISOString();
+            const bookingToken = response.data.search_metadata?.google_flights_url || '';
 
-            bestFlights.forEach(flight => {
-                const airline = flight.flights[0].airline;
+            allFlights.forEach(flight => {
+                const leg = flight.flights?.[0] || {};
+                const airline = leg.airline || '';
                 const price = flight.price;
 
-                // Filter for our target airlines
-                if (airline.includes('JetBlue') || airline.includes('JSX')) {
-                    stmt.run(airline, origin, destination, dStr, price, now);
-                    console.log(`Saved real price for ${airline} on ${dStr}: $${price}`);
+                // Only save JetBlue and JSX flights
+                if (price && (airline.includes('JetBlue') || airline.includes('JSX'))) {
+                    const depTime = leg.departure_airport?.time || '';
+                    const arrTime = leg.arrival_airport?.time || '';
+                    const duration = flight.total_duration || leg.duration || null;
+                    const flightNum = leg.flight_number ? `${leg.airline_logo ? '' : ''}${airline} ${leg.flight_number}` : '';
+                    const stops = (flight.flights?.length || 1) - 1;
+
+                    stmt.run(airline, origin, destination, dStr, price, now, depTime, arrTime, duration, flightNum, stops, bookingToken);
+                    console.log(`Saved: ${airline} ${flightNum} on ${dStr}: $${price} (${depTime}-${arrTime})`);
                 }
             });
 
@@ -197,23 +297,28 @@ const fetchRealFlightPrices = async (origin = 'JFK', destination = 'MIA', baseDa
             }
         }
     } catch (error) {
-        console.error('Error fetching real flight data:', error.message);
+        console.error('Error fetching real flight data:', error.message, error.response?.data || '');
     }
 };
 
 // Trigger a manual search from the frontend
 app.post('/api/flights/search', async (req, res) => {
-    const { origin, destination, date, flexDays } = req.body;
-    if (!process.env.SERPAPI_KEY) {
+    const { origin, destination, date, returnDate, flexDays } = req.body;
+    if (serpApiKeys.length === 0) {
         return res.status(400).json({ error: 'No API key configured.' });
     }
+    // Search outbound
     await fetchRealFlightPrices(origin, destination, date, flexDays || 0);
+    // Search return leg if provided
+    if (returnDate) {
+        await fetchRealFlightPrices(destination, origin, returnDate, flexDays || 0);
+    }
     res.json({ message: 'Live search completed and prices stored.' });
 });
 
 // Scheduled Scraper Job
-// User requested max frequency for free tier. 
-// "0 6,14,22 * * *" means run at 6:00 AM, 2:00 PM, and 10:00 PM every day (3x per day) to stay under the 100/mo free tier limit for a single route.
+// 2 SerpAPI keys × 250 free searches/month = 500 total. Keys rotate via round-robin.
+// "0 6,14,22 * * *" = 3x/day (6 AM, 2 PM, 10 PM) — ~90 searches/month for a single route.
 cron.schedule('0 6,14,22 * * *', () => {
     console.log('Running scheduled flight price check (3x per day)...');
     // Hardcoded spring break route for demonstration, in a real app this would iterate over user saved watchlists.

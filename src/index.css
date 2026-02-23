@@ -790,6 +790,20 @@ body {
   letter-spacing: 0.05em;
 }
 
+.insight-link {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--navy-600, #1c4480);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.insight-link:hover {
+  color: var(--red-500, #c51f28);
+  text-decoration: underline;
+}
+
 .airline-badge.jetblue {
   background: rgba(10,26,51,0.05);
   color: var(--navy-700);
